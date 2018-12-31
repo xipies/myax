@@ -343,8 +343,8 @@ local function handleActionPacket(id, size, packet)
                     spellInfo = getSpellInfo(action.param);
 
                     ax_id = spellInfo.id;
-                ax_name = spellInfo.name;
-                has_ax = true;
+                    ax_name = spellInfo.name;
+                    has_ax = true;
                 end
             elseif (pp.category == 14) then
                 -- 100 - The <player> uses ..
