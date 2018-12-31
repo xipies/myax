@@ -296,6 +296,56 @@ local function getDanceInfo(danceid)
     return { id = danceid, name = dancename };
 end
 
+local function getAnyInfo(category, id)
+    local ax_id;
+    local ax_name;
+    local has_ax = false;
+
+    if (category == 6) then
+        -- ACTION_JOBABILITY_FINISH = 6
+        -- 100 - The <player> uses ..
+        -- message id varies
+
+        jobAbilityInfo = getJobAbilityInfo(id);
+
+        ax_id = jobAbilityInfo.id;
+        ax_name = jobAbilityInfo.name;
+        has_ax = true;
+    elseif (category == 7) then
+        -- ACTION_WEAPONSKILL_START = 7 (and [fake] ACTION_MOBABILITY_START = 33)
+        -- 043 - The <player> readies <ability>.
+
+        mobAbilityInfo = getMobAbilityInfo(id);
+
+        ax_id = mobAbilityInfo.id;
+        ax_name = mobAbilityInfo.name;
+        has_ax = true;
+    elseif (category == 8) then
+        -- ACTION_MAGIC_START = 8
+        -- 327 - The <player> starts casting <spell> on <target>.
+
+        spellInfo = getSpellInfo(id);
+
+        ax_id = spellInfo.id;
+        ax_name = spellInfo.name;
+        has_ax = true;
+    elseif (category == 14) then
+        -- 100 - The <player> uses ..
+
+        danceInfo = getDanceInfo(id);
+
+        ax_id = danceInfo.id;
+        ax_name = danceInfo.name;
+        has_ax = true;
+    end
+
+    if (has_ax) then
+        return { category = category, id = id, name = ax_name };
+    else
+        return { category = category, id = id, name = 'UNKNOWN_AX' };
+    end
+end
+
 local function get_ax(category, param, actor_id, actor_name, actor_type, actor_isself, target_id, target_name, target_type, target_isself, message_id, action_param, ax_id, ax_name)
     local axkey = tostring(actor_id) .. '_' .. tostring(target_id) .. '_' .. tostring(ax_id);
 
@@ -408,12 +458,176 @@ local function handleActionPacket(id, size, packet)
     end
 end
 
+local function listSyles()
+    -- Build list of available styles
+    local e = { };
+    for k, v in pairs(myax_config.styles) do
+        table.insert(e, k);
+    end
+    table.sort(e);
+
+    print('Styles:  ' .. table.concat(e, '  '));
+end
+
+local function initConf()
+    myax_config = table.merge(default_config, myax_config);
+
+    local window_x = AshitaCore:GetConfigurationManager():get_int32('boot_config', 'window_x', 800);
+    local window_y = AshitaCore:GetConfigurationManager():get_int32('boot_config', 'window_y', 800);
+
+    local scale_x = window_x / myax_config.font.reference[1];
+    local scale_y = window_y / myax_config.font.reference[2];
+
+    -- Build configuration with scaled dimensions
+    local conf = { };
+    conf.font = { };
+    conf.font.size = myax_config.font.size * scale_y;
+
+    -- Not scaling outline size
+    ----conf.font.outline_size = myax_config.font.outline_size * scale_y;
+
+    ----if (conf.font.outline_size < 1) then
+    ----    conf.font.outline_size = 1;
+    ----end
+
+    -- Add in fixed offset (since native UI elements do not scale)
+    conf.font.position = { round(myax_config.font.position[1] * scale_x) + myax_config.font.offset[1], round(myax_config.font.position[2] * scale_y) + myax_config.font.offset[2] };
+
+    conf = table.merge(myax_config, conf);
+
+    createFontAll(conf);
+end
+
+local function loadConf(name)
+    print('Loading configuration: ' .. name);
+
+    deleteFontAll(myax_config);
+
+    -- Attempt to load the MyActionsStarted configuration..
+    myax_config = ashita.settings.load(_addon.path .. 'settings/' .. name .. '.json') or default_config;
+
+    initConf();
+end
+
+local function saveConf(name)
+    print('Saving configuration: ' .. name);
+
+    local window_x = AshitaCore:GetConfigurationManager():get_int32('boot_config', 'window_x', 800);
+    local window_y = AshitaCore:GetConfigurationManager():get_int32('boot_config', 'window_y', 800);
+
+    local scale_x = window_x / myax_config.font.reference[1];
+    local scale_y = window_y / myax_config.font.reference[2];
+
+    local f = AshitaCore:GetFontManager():Get( font_alias );
+    -- Subtract out fixed offset (since native UI elements do not scale)
+    myax_config.font.position = { round((f:GetPositionX() - myax_config.font.offset[1]) / scale_x), round((f:GetPositionY() - myax_config.font.offset[2]) / scale_y) };
+
+    -- Ensure the settings folder exists..
+    if (not ashita.file.dir_exists(_addon.path .. 'settings')) then
+        ashita.file.create_dir(_addon.path .. 'settings');
+    end
+
+    -- Save the configuration..
+    ashita.settings.save(_addon.path .. 'settings/' .. name .. '.json', myax_config);
+end
+
+local function addRule(category, ax_id, style)
+    print('Adding ' .. tostring(category) .. ' ' .. tostring(ax_id) .. ' ' .. tostring(style));
+
+    if (myax_config.styles[style] == nil) then
+        print('Unknown style');
+        listSyles();
+        return;
+    end
+
+    local action_cat;
+    local action_cat_ax;
+
+    local category__key = tostring(category);
+    local ax_id__key = tostring(ax_id);
+
+    action_cat = myax_config.actions[category__key];
+    if (action_cat == nil) then
+        action_cat = { };
+        myax_config.actions[category__key] = action_cat;
+    end
+
+    action_cat_ax = action_cat[ax_id__key];
+    if (action_cat_ax == nil) then
+        action_cat_ax = { };
+        action_cat[ax_id__key] = action_cat_ax;
+    end
+
+    action_cat_ax.style = style;
+
+    local axInfo = getAnyInfo(tonumber(category), tonumber(ax_id));
+
+    action_cat_ax.name = axInfo.name;
+
+    print('Added ' .. axInfo.name);
+end
+
+local function removeRule(category, ax_id)
+    print('Removing ' .. tostring(category) .. ' ' .. tostring(ax_id));
+
+    local action_cat;
+    local action_cat_ax;
+
+    local category__key = tostring(category);
+    local ax_id__key = tostring(ax_id);
+
+    action_cat = myax_config.actions[category__key];
+    if (action_cat == nil) then
+        print('Rule for category not found.');
+        return;
+    end
+
+    action_cat_ax = action_cat[ax_id__key];
+    if (action_cat_ax == nil) then
+        print('Rule for category/id not found.');
+        return;
+    end
+
+    action_cat[ax_id__key] = nil;
+end
+
 ashita.register_event('command', function(cmd, nType)
     local args = cmd:args();
 
     if (#args > 0 and args[1] == '/ax')  then
         if (#args > 1)  then
-            if (args[2] == 'reset')  then
+            if (args[2] == 'help')  then
+                print('MyActionsStarted commands:');
+                print('/ax load [filename]');
+                print('/ax save [filename]');
+                print('/ax add [category] [id] [style]');
+                print('/ax remove [category] [id]');
+                listSyles();
+            elseif (args[2] == 'load')  then
+                if (#args > 2)  then
+                    loadConf(args[3]);
+                else
+                    loadConf('myax');
+                end
+            elseif (args[2] == 'save')  then
+                if (#args > 2)  then
+                    saveConf(args[3]);
+                else
+                    saveConf('myax');
+                end
+            elseif (args[2] == 'add')  then
+                if (#args > 4)  then
+                    addRule(args[3], args[4], args[5]);
+                else
+                    print('/ax add [category] [id] [style]');
+                end
+            elseif (args[2] == 'remove')  then
+                if (#args > 3)  then
+                    removeRule(args[3], args[4]);
+                else
+                    print('/ax remove [category] [id]');
+                end
+            elseif (args[2] == 'reset')  then
                 print('Resetting ax...');
                 axstarted = { };
                 return true;
@@ -458,55 +672,12 @@ end );
 ashita.register_event('load', function()
     __mobinfo_load();
 
-    -- Attempt to load the MyActionsStarted configuration..
-    myax_config = ashita.settings.load(_addon.path .. 'settings/myax.json') or default_config;
-    myax_config = table.merge(default_config, myax_config);
+    myax_config = default_config;
 
-    local window_x = AshitaCore:GetConfigurationManager():get_int32('boot_config', 'window_x', 800);
-    local window_y = AshitaCore:GetConfigurationManager():get_int32('boot_config', 'window_y', 800);
-
-    local scale_x = window_x / myax_config.font.reference[1];
-    local scale_y = window_y / myax_config.font.reference[2];
-
-    -- Build configuration with scaled dimensions
-    local conf = { };
-    conf.font = { };
-    conf.font.size = myax_config.font.size * scale_y;
-
-    -- Not scaling outline size
-    ----conf.font.outline_size = myax_config.font.outline_size * scale_y;
-
-    ----if (conf.font.outline_size < 1) then
-    ----    conf.font.outline_size = 1;
-    ----end
-
-    -- Add in fixed offset (since native UI elements do not scale)
-    conf.font.position = { round(myax_config.font.position[1] * scale_x) + myax_config.font.offset[1], round(myax_config.font.position[2] * scale_y) + myax_config.font.offset[2] };
-
-    conf = table.merge(myax_config, conf);
-
-    createFontAll(conf);
+    initConf();
 end );
 
 ashita.register_event('unload', function()
-    local window_x = AshitaCore:GetConfigurationManager():get_int32('boot_config', 'window_x', 800);
-    local window_y = AshitaCore:GetConfigurationManager():get_int32('boot_config', 'window_y', 800);
-
-    local scale_x = window_x / myax_config.font.reference[1];
-    local scale_y = window_y / myax_config.font.reference[2];
-
-    local f = AshitaCore:GetFontManager():Get( font_alias );
-    -- Subtract out fixed offset (since native UI elements do not scale)
-    myax_config.font.position = { round((f:GetPositionX() - myax_config.font.offset[1]) / scale_x), round((f:GetPositionY() - myax_config.font.offset[2]) / scale_y) };
-
-    -- Ensure the settings folder exists..
-    if (not ashita.file.dir_exists(_addon.path .. 'settings')) then
-        ashita.file.create_dir(_addon.path .. 'settings');
-    end
-
-    -- Save the configuration..
-    ashita.settings.save(_addon.path .. 'settings/myax.json', myax_config);
-
     deleteFontAll(myax_config);
 end );
 
