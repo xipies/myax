@@ -31,15 +31,15 @@ local default_config =
     {
         reference       = { 1680, 1050 },
         family          = 'Arial',
-        size            = 28,
+        size            = 12,
         color           = 0x99FEFEFE,
         position        = { 520, 0 },
         offset          = { 0, 80 },
         bold            = true,
-        italic          = true,
+        italic          = false,
         outline_enabled = true,
         outline_color   = 0x992B2B2B,
-        outline_size    = 2
+        outline_size    = 1
     },
     styles =
     {
@@ -71,6 +71,7 @@ local default_config =
     show_actor_self = false,
     show_actor_nonself = false,
     show_actor_mob = true,
+    show_id = false,
     max_items = 8,
     decay_duration = 5
 };
@@ -584,10 +585,18 @@ ashita.register_event('render', function()
 
                 if (show) then
                     if (count < myax_config.max_items) then
-                        if (axitem.actor_id == axitem.target_id) then
-                            s = string.format('(%s) %s', axitem.actor_name, axitem.ax_name);
+                        local ax_name_fmt;
+
+                        if (myax_config.show_id) then
+                            ax_name_fmt = string.format('%s (%s:%s)', axitem.ax_name, tostring(axitem.category), tostring(axitem.ax_id));
                         else
-                            s = string.format('(%s) %s >>> %s', axitem.actor_name, axitem.ax_name, axitem.target_name);
+                            ax_name_fmt = axitem.ax_name;
+                        end
+
+                        if (axitem.actor_id == axitem.target_id) then
+                            s = string.format('(%s) %s', axitem.actor_name, ax_name_fmt);
+                        else
+                            s = string.format('(%s) %s >>> %s', axitem.actor_name, ax_name_fmt, axitem.target_name);
                         end
 
                         table.insert(e_unstyled, s);
