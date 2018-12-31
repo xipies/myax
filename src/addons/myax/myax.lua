@@ -41,9 +41,38 @@ local default_config =
         outline_color   = 0x992B2B2B,
         outline_size    = 2
     },
+    styles =
+    {
+        cat0 = { color = '99FEFEFE', display = true },
+        cat1 = { color = 'FFFCFCFC', display = true },
+        cat2 = { color = 'FFFFFF60', display = true },
+        cat3 = { color = 'FFFCA650', display = true },
+        cat4 = { color = 'FFFC4040', display = true }
+    },
+    actions =
+    {
+        -- Category: Mob Ability (7)
+        ['7'] =
+        {
+            -- https://github.com/DarkstarProject/darkstar/blob/master/sql/mob_skills.sql
+            -- mob_anim_id + 256
+            ['910'] = { name = 'Spike Flail', style = 'cat4' }
+        },
+        -- Category: Spell (8)
+        ['8'] =
+        {
+            -- https://github.com/DarkstarProject/darkstar/blob/master/src/map/spell.h
+            -- SpellID
+            ['218'] = { name = 'Meteor', style = 'cat4' },
+            ['367'] = { name = 'Death', style = 'cat4' }
+        }
+    },
+    default_style = 'cat0',
     show_actor_self = false,
     show_actor_nonself = false,
-    show_actor_mob = true
+    show_actor_mob = true,
+    max_items = 8,
+    decay_duration = 5
 };
 local myax_config = default_config;
 
@@ -105,12 +134,12 @@ local function setText(conf, alias, text)
     f:SetText(text);
 end
 
-local function setTextAll(conf, text)
+local function setTextAll(conf, text, text_unstyled)
     if (conf.font.outline_enabled) then
-        setText(conf, font_alias_o1, text);
-        setText(conf, font_alias_o2, text);
-        setText(conf, font_alias_o3, text);
-        setText(conf, font_alias_o4, text);
+        setText(conf, font_alias_o1, text_unstyled);
+        setText(conf, font_alias_o2, text_unstyled);
+        setText(conf, font_alias_o3, text_unstyled);
+        setText(conf, font_alias_o4, text_unstyled);
     end
 
     setText(conf, font_alias, text);
@@ -131,6 +160,20 @@ local function unsz(s)
     end
 
     return s;
+end
+
+---------------------------------------------------------------------------------------------------
+-- func: color_entry
+-- desc: Colors an entry.
+---------------------------------------------------------------------------------------------------
+local function color_entry(s, c)
+    -- v2 format
+    -- \cs(r,g,b)<text here>\cr
+    -- \cs(a,r,g,b)<text here>\cr
+    ----return string.format('\\cs(%s)%s\\cr', c, s);
+    -- v3 format
+    -- |cAARRGGBB|<text here>|r
+    return string.format('|c%s|%s|r', c, s);
 end
 
 local function findEntity(entityid)
@@ -479,6 +522,7 @@ ashita.register_event('render', function()
 
         ----local f = AshitaCore:GetFontManager():Get( font_alias );
         local e = { }; -- Effect entries..
+        local e_unstyled = { };
         local rm = { };
 
         if (axstarted.actions ~= nil) then
@@ -513,19 +557,51 @@ ashita.register_event('render', function()
                     end
                 end
 
+                local action_cat;
+                local action_cat_ax;
+                local style;
+                local has_style = false;
+
+                action_cat = myax_config.actions[tostring(axitem.category)];
+                if (action_cat ~= nil) then
+                    action_cat_ax = action_cat[tostring(axitem.ax_id)];
+                    if (action_cat_ax ~= nil) then
+                        style = myax_config.styles[action_cat_ax.style];
+                    end
+                end
+
+                if (style == nil) then
+                    style = myax_config.styles[myax_config.default_style];
+                end
+
+                if (style ~= nil) then
+                    has_style = true;
+
+                    if (style.display == false) then
+                        show = false;
+                    end
+                end
+
                 if (show) then
-                    if (count < 32) then
+                    if (count < myax_config.max_items) then
                         if (axitem.actor_id == axitem.target_id) then
                             s = string.format('(%s) %s', axitem.actor_name, axitem.ax_name);
                         else
                             s = string.format('(%s) %s >>> %s', axitem.actor_name, axitem.ax_name, axitem.target_name);
                         end
+
+                        table.insert(e_unstyled, s);
+
+                        if (has_style) then
+                            s = color_entry(s, style.color);
+                        end
+
                         table.insert(e, s);
                         count = count + 1;
                     end
                 end
 
-                if (timeRemaining < -5) then
+                if (timeRemaining < (0 - myax_config.decay_duration)) then
                     table.insert(rm, k);
                 end
 
@@ -538,7 +614,8 @@ ashita.register_event('render', function()
         end
 
         local output = table.concat( e, '\n' );
+        local output_unstyled = table.concat( e_unstyled, '\n' );
         ----f:SetText( output );
-        setTextAll(myax_config, output);
+        setTextAll(myax_config, output, output_unstyled);
     end
 end );
