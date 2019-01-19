@@ -54,9 +54,10 @@ local default_config =
         -- Category: Mob Ability (7)
         ['7'] =
         {
-            -- https://github.com/DarkstarProject/darkstar/blob/master/sql/mob_skills.sql
-            -- mob_anim_id + 256
-            ['910'] = { name = 'Spike Flail', style = 'cat4' }
+            -- https://github.com/DarkstarProject/darkstar/blob/master/documentation/monster_tp_moves.txt
+            -- https://github.com/DarkstarProject/darkstar/blob/master/sql/mob_skill_lists.sql
+            ['1040'] = { name = 'Spike Flail', style = 'cat4' },
+            ['952'] = { name = 'Spike Flail', style = 'cat4' }
         },
         -- Category: Spell (8)
         ['8'] =
