@@ -72,6 +72,7 @@ local default_config =
     show_actor_self = false,
     show_actor_nonself = false,
     show_actor_mob = true,
+    show_actor_pet = true,
     show_id = false,
     max_items = 8,
     decay_duration = 5
@@ -178,7 +179,7 @@ local function color_entry(s, c)
     return string.format('|c%s|%s|r', c, s);
 end
 
-local function findEntity(entityid)
+local function findEntityPlayer(entityid)
     -- targid < 0x400
     --   TYPE_MOB || TYPE_NPC || TYPE_SHIP
     -- targid < 0x700
@@ -197,22 +198,50 @@ local function findEntity(entityid)
     return nil;
 end
 
+local function findEntityPet(entityid)
+    -- targid < 0x400
+    --   TYPE_MOB || TYPE_NPC || TYPE_SHIP
+    -- targid < 0x700
+    --   TYPE_PC
+    -- targid < 0x800
+    --   TYPE_PET
+
+    -- Search pets
+    for x = 0x700, 0x7FF do
+        local ent = GetEntity(x);
+        if (ent ~= nil and ent.ServerId == entityid) then
+            return { id = entityid, index = x, name = ent.Name };
+        end
+    end
+
+    return nil;
+end
+
 local function getEntityInfo(zoneid, entityid)
     local zonemin = bit.lshift(zoneid, 12) + 0x1000000;
 
-    local entityindex;
-    local entityname;
-    local entitytype;
+    local entityindex = 0;
+    local entityname = nil;
+    local entitytype = 0x00;
     local isself = false;
 
     -- Check if entity looks like a mobid
     if (bit.band(zonemin, entityid) == zonemin) then
         entityindex = bit.band(entityid, 0xfff);
-        entityname = MobNameFromTargetId(entityindex);
-        entitytype = 0x04; -- TYPE_MOB
+        if (entityindex < 0x400) then
+            entityname = MobNameFromTargetId(entityindex);
+            entitytype = 0x04; -- TYPE_MOB
+        elseif (entityindex >= 0x700 and entityindex < 0x800) then
+            local entityResult = findEntityPet(entityid);
+            if (entityResult ~= nil) then
+                entityindex = entityResult.index;
+                entityname = entityResult.name;
+                entitytype = 0x08; -- TYPE_PET
+            end
+        end
     else
         -- Otherwise try finding player in NPC map
-        local entityResult = findEntity(entityid);
+        local entityResult = findEntityPlayer(entityid);
         if (entityResult ~= nil) then
             entityindex = entityResult.index;
             entityname = entityResult.name;
@@ -223,10 +252,6 @@ local function getEntityInfo(zoneid, entityid)
             if (entityindex == selftarget) then
                 isself = true;
             end
-        else
-            entityindex = 0;
-            entityname = nil;
-            entitytype = 0x00;
         end
     end
 
@@ -297,51 +322,82 @@ local function getDanceInfo(danceid)
     return { id = danceid, name = dancename };
 end
 
-local function getAnyInfo(category, id)
+local function getActionPacketInfo(pp, action)
+    local spellInfo;
+    local jobAbilityInfo;
+    local mobAbilityInfo;
+    local danceInfo;
+
     local ax_id;
     local ax_name;
     local has_ax = false;
 
-    if (category == 6) then
+    if (pp.category == 6) then
         -- ACTION_JOBABILITY_FINISH = 6
         -- 100 - The <player> uses ..
         -- message id varies
 
-        jobAbilityInfo = getJobAbilityInfo(id);
+        jobAbilityInfo = getJobAbilityInfo(pp.param);
 
         ax_id = jobAbilityInfo.id;
         ax_name = jobAbilityInfo.name;
         has_ax = true;
-    elseif (category == 7) then
+    elseif (pp.category == 7) then
         -- ACTION_WEAPONSKILL_START = 7 (and [fake] ACTION_MOBABILITY_START = 33)
         -- 043 - The <player> readies <ability>.
 
-        mobAbilityInfo = getMobAbilityInfo(id);
+        mobAbilityInfo = getMobAbilityInfo(action.param);
 
         ax_id = mobAbilityInfo.id;
         ax_name = mobAbilityInfo.name;
         has_ax = true;
-    elseif (category == 8) then
+    elseif (pp.category == 8) then
         -- ACTION_MAGIC_START = 8
         -- 327 - The <player> starts casting <spell> on <target>.
 
-        spellInfo = getSpellInfo(id);
+        -- Getting message_id of zero when casting is interrupted
+        if (action.message_id > 0) then
+            spellInfo = getSpellInfo(action.param);
 
-        ax_id = spellInfo.id;
-        ax_name = spellInfo.name;
-        has_ax = true;
-    elseif (category == 14) then
+            ax_id = spellInfo.id;
+            ax_name = spellInfo.name;
+            has_ax = true;
+        end
+    elseif (pp.category == 14) then
         -- 100 - The <player> uses ..
 
-        danceInfo = getDanceInfo(id);
+        danceInfo = getDanceInfo(pp.param);
 
         ax_id = danceInfo.id;
         ax_name = danceInfo.name;
         has_ax = true;
     end
 
-    if (has_ax) then
-        return { category = category, id = id, name = ax_name };
+    return { ax_id = ax_id, ax_name = ax_name, has_ax = has_ax };
+end
+
+local function getAnyInfo(category, id)
+    -- Simulate parameters for call to getActionPacketInfo
+    local pp = { };
+    local action = { };
+
+    pp.category = category;
+
+    if (category == 6) then
+        pp.param = id;
+    elseif (category == 7) then
+        action.param = id;
+    elseif (category == 8) then
+        action.message_id = 0x3FF; -- [Fake] Must be greater than zero
+        action.param = id;
+    elseif (category == 14) then
+        pp.param = id;
+    end
+
+    local axPInfo = getActionPacketInfo(pp, action);
+
+    if (axPInfo.has_ax) then
+        return { category = category, id = id, name = axPInfo.ax_name };
     else
         return { category = category, id = id, name = 'UNKNOWN_AX' };
     end
@@ -401,58 +457,10 @@ local function handleActionPacket(id, size, packet)
         for y = 1, target.action_count do
             local action = target.actions[y];
 
-            local spellInfo;
-            local jobAbilityInfo;
-            local mobAbilityInfo;
-            local danceInfo;
+            local axPInfo = getActionPacketInfo(pp, action);
 
-            local ax_id;
-            local ax_name;
-            local has_ax = false;
-
-            if (pp.category == 6) then
-                -- ACTION_JOBABILITY_FINISH = 6
-                -- 100 - The <player> uses ..
-                -- message id varies
-
-                jobAbilityInfo = getJobAbilityInfo(pp.param);
-
-                ax_id = jobAbilityInfo.id;
-                ax_name = jobAbilityInfo.name;
-                has_ax = true;
-            elseif (pp.category == 7) then
-                -- ACTION_WEAPONSKILL_START = 7 (and [fake] ACTION_MOBABILITY_START = 33)
-                -- 043 - The <player> readies <ability>.
-
-                mobAbilityInfo = getMobAbilityInfo(action.param);
-
-                ax_id = mobAbilityInfo.id;
-                ax_name = mobAbilityInfo.name;
-                has_ax = true;
-            elseif (pp.category == 8) then
-                -- ACTION_MAGIC_START = 8
-                -- 327 - The <player> starts casting <spell> on <target>.
-
-                -- Getting message_id of zero when casting is interrupted
-                if (action.message_id > 0) then
-                    spellInfo = getSpellInfo(action.param);
-
-                    ax_id = spellInfo.id;
-                    ax_name = spellInfo.name;
-                    has_ax = true;
-                end
-            elseif (pp.category == 14) then
-                -- 100 - The <player> uses ..
-
-                danceInfo = getDanceInfo(pp.param);
-
-                ax_id = danceInfo.id;
-                ax_name = danceInfo.name;
-                has_ax = true;
-            end
-
-            if (has_ax) then
-                local axitem = get_ax(pp.category, pp.param, pp.actor_id, actorInfo.name, actorInfo.entitytype, actorInfo.isself, target.id, targetInfo.name, targetInfo.entitytype, targetInfo.isself, action.message_id, action.param, ax_id, ax_name);
+            if (axPInfo.has_ax) then
+                local axitem = get_ax(pp.category, pp.param, pp.actor_id, actorInfo.name, actorInfo.entitytype, actorInfo.isself, target.id, targetInfo.name, targetInfo.entitytype, targetInfo.isself, action.message_id, action.param, axPInfo.ax_id, axPInfo.ax_name);
                 axitem.modified = os.clock();
             end
         end
@@ -714,6 +722,12 @@ ashita.register_event('render', function()
                     -- TYPE_MOB
 
                     if (myax_config.show_actor_mob == false) then
+                        show = false;
+                    end
+                elseif (axitem.actor_type == 0x08) then
+                    -- TYPE_PET
+
+                    if (myax_config.show_actor_pet == false) then
                         show = false;
                     end
                 elseif (axitem.actor_type == 0x01) then
