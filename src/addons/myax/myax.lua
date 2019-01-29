@@ -74,6 +74,7 @@ local default_config =
     show_actor_mob = true,
     show_actor_pet = true,
     show_id = false,
+    show_pet_owner = true,
     max_items = 8,
     decay_duration = 5
 };
@@ -210,7 +211,7 @@ local function findEntityPet(entityid)
     for x = 0x700, 0x7FF do
         local ent = GetEntity(x);
         if (ent ~= nil and ent.ServerId == entityid) then
-            return { id = entityid, index = x, name = ent.Name };
+            return { id = entityid, index = x, name = ent.Name, petOwnerPtr = ent.PetOwnerId };
         end
     end
 
@@ -225,6 +226,12 @@ local function getEntityInfo(zoneid, entityid)
     local entitytype = 0x00;
     local isself = false;
 
+    local has_petowner = false;
+    local petownerid = 0;
+    local petownerindex = 0;
+    local petownername = nil;
+    local petownertype = 0x00;
+
     -- Check if entity looks like a mobid
     if (bit.band(zonemin, entityid) == zonemin) then
         entityindex = bit.band(entityid, 0xfff);
@@ -237,6 +244,21 @@ local function getEntityInfo(zoneid, entityid)
                 entityindex = entityResult.index;
                 entityname = entityResult.name;
                 entitytype = 0x08; -- TYPE_PET
+
+                -- See: ffxi_entity_t (plugins\ADK\ffxi\entity.h)
+                if (entityResult.petOwnerPtr ~= nil and entityResult.petOwnerPtr ~= 0) then
+                    local petOwnerServerId = ashita.memory.read_uint32(entityResult.petOwnerPtr + 120);
+                    if (petOwnerServerId ~= nil and petOwnerServerId ~= 0) then
+                        local petOwnerEntityResult = findEntityPlayer(petOwnerServerId);
+                        if (petOwnerEntityResult ~= nil) then
+                            has_petowner = true;
+                            petownerid = petOwnerServerId;
+                            petownerindex = petOwnerEntityResult.index;
+                            petownername = petOwnerEntityResult.name;
+                            petownertype = 0x01; -- TYPE_PC
+                        end
+                    end
+                end
             end
         end
     else
@@ -260,7 +282,7 @@ local function getEntityInfo(zoneid, entityid)
     end
 
     -- Convert null terminated strings
-    return { id = entityid, index = entityindex, name = unsz(entityname), entitytype = entitytype, isself = isself };
+    return { id = entityid, index = entityindex, name = unsz(entityname), entitytype = entitytype, isself = isself, has_petowner = has_petowner, petownerid = petownerid, petownerindex = petownerindex, petownername = petownername, petownertype = petownertype };
 end
 
 local function getSpellInfo(spellid)
@@ -403,7 +425,30 @@ local function getAnyInfo(category, id)
     end
 end
 
-local function get_ax(category, param, actor_id, actor_name, actor_type, actor_isself, target_id, target_name, target_type, target_isself, message_id, action_param, ax_id, ax_name)
+local function get_ax(
+    category,
+    param,
+    actor_id,
+    actor_name,
+    actor_type,
+    actor_isself,
+    actor_hasPO,
+    actorPO_id,
+    actorPO_name,
+    actorPO_type,
+    target_id,
+    target_name,
+    target_type,
+    target_isself,
+    target_hasPO,
+    targetPO_id,
+    targetPO_name,
+    targetPO_type,
+    message_id,
+    action_param,
+    ax_id,
+    ax_name
+)
     local axkey = tostring(actor_id) .. '_' .. tostring(target_id) .. '_' .. tostring(ax_id);
 
     if (axstarted.actions == nil) then
@@ -419,10 +464,18 @@ local function get_ax(category, param, actor_id, actor_name, actor_type, actor_i
         axitem.actor_name = actor_name;
         axitem.actor_type = actor_type;
         axitem.actor_isself = actor_isself;
+        axitem.actor_hasPO = actor_hasPO;
+        axitem.actorPO_id = actorPO_id;
+        axitem.actorPO_name = actorPO_name;
+        axitem.actorPO_type = actorPO_type;
         axitem.target_id = target_id;
         axitem.target_name = target_name;
         axitem.target_type = target_type;
         axitem.target_isself = target_isself;
+        axitem.target_hasPO = target_hasPO;
+        axitem.targetPO_id = targetPO_id;
+        axitem.targetPO_name = targetPO_name;
+        axitem.targetPO_type = targetPO_type;
         axitem.message_id = message_id;
         axitem.action_param = action_param;
         axitem.ax_id = ax_id;
@@ -460,7 +513,30 @@ local function handleActionPacket(id, size, packet)
             local axPInfo = getActionPacketInfo(pp, action);
 
             if (axPInfo.has_ax) then
-                local axitem = get_ax(pp.category, pp.param, pp.actor_id, actorInfo.name, actorInfo.entitytype, actorInfo.isself, target.id, targetInfo.name, targetInfo.entitytype, targetInfo.isself, action.message_id, action.param, axPInfo.ax_id, axPInfo.ax_name);
+                local axitem = get_ax(
+                    pp.category,
+                    pp.param,
+                    pp.actor_id,
+                    actorInfo.name,
+                    actorInfo.entitytype,
+                    actorInfo.isself,
+                    actorInfo.has_petowner,
+                    actorInfo.petownerid,
+                    actorInfo.petownername,
+                    actorInfo.petownertype,
+                    target.id,
+                    targetInfo.name,
+                    targetInfo.entitytype,
+                    targetInfo.isself,
+                    targetInfo.has_petowner,
+                    targetInfo.petownerid,
+                    targetInfo.petownername,
+                    targetInfo.petownertype,
+                    action.message_id,
+                    action.param,
+                    axPInfo.ax_id,
+                    axPInfo.ax_name
+                );
                 axitem.modified = os.clock();
             end
         end
@@ -772,6 +848,8 @@ ashita.register_event('render', function()
                 if (show) then
                     if (count < myax_config.max_items) then
                         local ax_name_fmt;
+                        local actor_name_fmt;
+                        local target_name_fmt;
 
                         if (myax_config.show_id) then
                             ax_name_fmt = string.format('%s (%s:%s)', axitem.ax_name, tostring(axitem.category), tostring(axitem.ax_id));
@@ -779,10 +857,22 @@ ashita.register_event('render', function()
                             ax_name_fmt = axitem.ax_name;
                         end
 
-                        if (axitem.actor_id == axitem.target_id) then
-                            s = string.format('(%s) %s', axitem.actor_name, ax_name_fmt);
+                        if (axitem.actor_hasPO and myax_config.show_pet_owner) then
+                            actor_name_fmt = string.format('%s (%s)', axitem.actor_name, axitem.actorPO_name);
                         else
-                            s = string.format('(%s) %s >>> %s', axitem.actor_name, ax_name_fmt, axitem.target_name);
+                            actor_name_fmt = axitem.actor_name;
+                        end
+
+                        if (axitem.target_hasPO and myax_config.show_pet_owner) then
+                            target_name_fmt = string.format('%s (%s)', axitem.target_name, axitem.targetPO_name);
+                        else
+                            target_name_fmt = axitem.target_name;
+                        end
+
+                        if (axitem.actor_id == axitem.target_id) then
+                            s = string.format('(%s) %s', actor_name_fmt, ax_name_fmt);
+                        else
+                            s = string.format('(%s) %s >>> %s', actor_name_fmt, ax_name_fmt, target_name_fmt);
                         end
 
                         table.insert(e_unstyled, s);
