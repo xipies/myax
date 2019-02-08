@@ -199,6 +199,25 @@ local function findEntityPlayer(entityid)
     return nil;
 end
 
+local function findEntityPlayerByPet(entityindex)
+    -- targid < 0x400
+    --   TYPE_MOB || TYPE_NPC || TYPE_SHIP
+    -- targid < 0x700
+    --   TYPE_PC
+    -- targid < 0x800
+    --   TYPE_PET
+
+    -- Search players
+    for x = 0x400, 0x6FF do
+        local ent = GetEntity(x);
+        if (ent ~= nil and ent.PetTargetIndex == entityindex) then
+            return { id = entityid, index = x, name = ent.Name };
+        end
+    end
+
+    return nil;
+end
+
 local function findEntityPet(entityid)
     -- targid < 0x400
     --   TYPE_MOB || TYPE_NPC || TYPE_SHIP
@@ -245,19 +264,13 @@ local function getEntityInfo(zoneid, entityid)
                 entityname = entityResult.name;
                 entitytype = 0x08; -- TYPE_PET
 
-                -- See: ffxi_entity_t (plugins\ADK\ffxi\entity.h)
-                if (entityResult.petOwnerPtr ~= nil and entityResult.petOwnerPtr ~= 0) then
-                    local petOwnerServerId = ashita.memory.read_uint32(entityResult.petOwnerPtr + 120);
-                    if (petOwnerServerId ~= nil and petOwnerServerId ~= 0) then
-                        local petOwnerEntityResult = findEntityPlayer(petOwnerServerId);
-                        if (petOwnerEntityResult ~= nil) then
-                            has_petowner = true;
-                            petownerid = petOwnerServerId;
-                            petownerindex = petOwnerEntityResult.index;
-                            petownername = petOwnerEntityResult.name;
-                            petownertype = 0x01; -- TYPE_PC
-                        end
-                    end
+                local petOwnerEntityResult = findEntityPlayerByPet(entityindex);
+                if (petOwnerEntityResult ~= nil) then
+                    has_petowner = true;
+                    petownerid = petOwnerServerId;
+                    petownerindex = petOwnerEntityResult.index;
+                    petownername = petOwnerEntityResult.name;
+                    petownertype = 0x01; -- TYPE_PC
                 end
             end
         end
